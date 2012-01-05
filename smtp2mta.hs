@@ -49,6 +49,8 @@ simpleServer h = do
 	hSetBuffering h LineBuffering
 	hSetNewlineMode h NewlineMode {inputNL = CRLF, outputNL = CRLF}
 
+	hPutStrLn h "220 localhost smtp2mta"
+
 	forever $ do
 		line <- hGetLine h
 		case map toUpper $ head $ words line of
