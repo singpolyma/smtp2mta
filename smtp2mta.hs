@@ -78,6 +78,9 @@ processLines h from rcpt = do
 			hPutStrLn h "250 OK"
 			processLines h from $ extractAddr (snd $ split (/= ':') word2)
 				`maybePrepend` rcpt
+		("RSET") -> do
+			hPutStrLn h "250 OK"
+			processLines h Nothing []
 		("QUIT") -> do
 			hPutStrLn h "221 localhost all done"
 			hClose h
