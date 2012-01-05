@@ -51,15 +51,39 @@ simpleServer h = do
 
 	hPutStrLn h "220 localhost smtp2mta"
 
-	forever $ do
-		line <- hGetLine h
-		case map toUpper $ head $ words line of
-			("HELO") -> hPutStrLn h "250 OK"
-			("EHLO") -> hPutStrLn h "250 OK"
-			("QUIT") -> do
-				hPutStrLn h "221 localhost all done"
-				hClose h
-			_ -> hPutStrLn h "500 Command unrecognized"
-	`safeFinally` do
+	processLines h Nothing [] `safeFinally` do
 		closed <- hIsClosed h
 		unless closed $ hClose h
+
+processLines :: Handle -> Maybe String -> [String] -> IO ()
+processLines h from rcpt = do
+	line <- hGetLine h
+	let tok = words line
+	let word2 = tok !! 1
+	let word3 = tok !! 2
+	let word2U = map toUpper word2
+	case map toUpper $ head tok of
+		("HELO") -> hPutStrLn h "250 OK"
+		("EHLO") -> hPutStrLn h "250 OK"
+		("MAIL") | word2U == "FROM:" -> do
+			hPutStrLn h "250 OK"
+			processLines h (extractAddress word3) []
+		         | otherwise -> do
+			hPutStrLn h "250 OK"
+			processLines h (extractAddress $ snd $ split (/= ':') word2) []
+		("QUIT") -> do
+			hPutStrLn h "221 localhost all done"
+			hClose h
+		_ -> hPutStrLn h "500 Command unrecognized"
+	processLines h from rcpt
+	where
+	extractAddress s =
+		let (a,b) = split (/= '<') s in
+			if null b then
+				if null a then Nothing else Just a
+			else
+				let (addr,_) = split (/= '>') b in
+					if null addr then Nothing else Just addr
+	split p s =
+		let (a,b) = span p s in
+			(a, drop 1 b)
