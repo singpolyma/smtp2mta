@@ -56,7 +56,9 @@ simpleServer h = do
 		case map toUpper $ head $ words line of
 			("HELO") -> hPutStrLn h "250 OK"
 			("EHLO") -> hPutStrLn h "250 OK"
-			("QUIT") -> hClose h
+			("QUIT") -> do
+				hPutStrLn h "221 localhost all done"
+				hClose h
 			_ -> hPutStrLn h "500 Command unrecognized"
 	`safeFinally` do
 		closed <- hIsClosed h
