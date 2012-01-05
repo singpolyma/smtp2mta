@@ -53,6 +53,7 @@ simpleServer h = do
 		line <- hGetLine h
 		case map toUpper $ head $ words line of
 			("HELO") -> hPutStrLn h "250 OK"
+			("EHLO") -> hPutStrLn h "250 OK"
 			("QUIT") -> hClose h
 			_ -> hPutStrLn h "500 Command unrecognized"
 	`safeFinally` do
