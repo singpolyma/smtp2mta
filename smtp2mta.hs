@@ -67,17 +67,26 @@ processLines h from rcpt = do
 		("EHLO") -> hPutStrLn h "250 OK"
 		("MAIL") | word2U == "FROM:" -> do
 			hPutStrLn h "250 OK"
-			processLines h (extractAddress word3) []
+			processLines h (extractAddr word3) []
 		         | otherwise -> do
 			hPutStrLn h "250 OK"
-			processLines h (extractAddress $ snd $ split (/= ':') word2) []
+			processLines h (extractAddr $ snd $ split (/= ':') word2) []
+		("RCPT") | word2U == "TO:" -> do
+			hPutStrLn h "250 OK"
+			processLines h from (extractAddr word3 `maybePrepend` rcpt)
+		         | otherwise -> do
+			hPutStrLn h "250 OK"
+			processLines h from $ extractAddr (snd $ split (/= ':') word2)
+				`maybePrepend` rcpt
 		("QUIT") -> do
 			hPutStrLn h "221 localhost all done"
 			hClose h
 		_ -> hPutStrLn h "500 Command unrecognized"
 	processLines h from rcpt
 	where
-	extractAddress s =
+	maybePrepend (Just x) xs = x:xs
+	maybePrepend Nothing xs = xs
+	extractAddr s =
 		let (a,b) = split (/= '<') s in
 			if null b then
 				if null a then Nothing else Just a
