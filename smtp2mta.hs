@@ -82,6 +82,7 @@ processLines h from rcpt = do
 		("RSET") -> do
 			hPutStrLn h "250 OK"
 			processLines h Nothing []
+		("NOOP") -> hPutStrLn h "250 OK"
 		("QUIT") -> do
 			hPutStrLn h "221 localhost all done"
 			hClose h
