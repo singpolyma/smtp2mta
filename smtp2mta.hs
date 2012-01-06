@@ -8,7 +8,7 @@ import System.Environment (getProgName)
 import System.Console.GetOpt
 import Control.Monad (liftM,forever,unless)
 import Prelude hiding (catch)
-import Control.Exception (finally, catch, SomeException(..))
+import Control.Exception (finally,catch,SomeException(..))
 import Control.Concurrent (forkIO)
 
 data Flag = Listen PortNumber | Help deriving (Eq)
