@@ -13,10 +13,14 @@ import Prelude hiding (catch)
 import Control.Exception (finally,catch,SomeException(..))
 import Control.Concurrent (forkIO)
 
-data Flag = Listen PortNumber | Help deriving (Eq)
+data LineInOut = In | Out String
+type LineHandle = LineInOut -> IO String
+
+data Flag = Listen PortNumber | Help | InetD deriving (Eq)
 options :: [OptDescr Flag]
 options = [
 		Option ['l'] ["listen"] (ReqArg port "PORT") "Listen on PORT (default 2525)",
+		Option ['i'] ["inetd"] (NoArg InetD) "Handle a single connection on stdin/stdout",
 		Option ['h'] ["help"] (NoArg Help) "Display this help message"
 	]
 	where
@@ -29,19 +33,36 @@ usage errors = do
 	putStrLn $ usageInfo ("Usage: " ++ cmd ++ " [-l PORT] command") options
 
 main :: IO ()
-main = withSocketsDo $ do
+main = do
 	(flags, args, errors) <- liftM (getOpt RequireOrder options) getArgs
 
-	if length errors > 0 then usage errors else
-		if Help `elem` flags then usage [] else do
+	if length errors > 0 || Help `elem` flags then usage errors else
+		if InetD `elem` flags then do
+			configureHandle stdin
+			configureHandle stdout
+			simpleServer (lineInOut stdin stdout) (unwords args)
+				`safeFinally` hClose stdout
+		else withSocketsDo $ do
 			sock <- listenOn $ getListen flags
 			forever $ do
 				(h,_,_) <- accept sock
-				forkIO $ simpleServer h (unwords args)
+				configureHandle h
+				forkIO $ simpleServer (lineInOut h h) (unwords args)
+					`safeFinally` (hIsClosed h >>= (`unless` hClose h))
 	where
 	getListen [] = PortNumber 2525
 	getListen (Listen p : _) = PortNumber p
 	getListen (_:xs) = getListen xs
+
+lineInOut :: Handle -> Handle -> LineInOut -> IO String
+lineInOut i _ In = hGetLine i
+lineInOut _ o (Out s) = hPutStrLn o s >> return ""
+
+configureHandle :: Handle -> IO ()
+configureHandle h = do
+	hSetBinaryMode h False
+	hSetBuffering h LineBuffering
+	hSetNewlineMode h NewlineMode {inputNL = CRLF, outputNL = CRLF}
 
 safeFinally :: IO () -> IO b -> IO ()
 safeFinally x y = catch (x `finally` y) (\(SomeException _) -> return ())
@@ -50,65 +71,61 @@ safeHead :: [a] -> a -> a
 safeHead [] def = def
 safeHead list _ = head list
 
-simpleServer :: Handle -> String -> IO ()
+simpleServer :: LineHandle -> String -> IO ()
 simpleServer h cmd = do
-	hSetBinaryMode h False
-	hSetBuffering h LineBuffering
-	hSetNewlineMode h NewlineMode {inputNL = CRLF, outputNL = CRLF}
+	h (Out "220 localhost smtp2mta")
+	processLines h cmd Nothing []
 
-	hPutStrLn h "220 localhost smtp2mta"
-
-	processLines h cmd Nothing [] `safeFinally`
-		(hIsClosed h >>= (`unless` hClose h))
-
-processLines :: Handle -> String -> Maybe String -> [String] -> IO ()
+processLines :: LineHandle -> String -> Maybe String -> [String] -> IO ()
 processLines h cmd from rcpt = do
-	line <- hGetLine h
+	line <- h In
 	let tok = words line
 	let word2 = tok !! 1
 	let word3 = tok !! 2
 	let word2U = map toUpper word2
 	case map toUpper $ safeHead tok "" of
-		("HELO") -> hPutStrLn h "250 OK"
-		("EHLO") -> hPutStrLn h "250 OK"
+		("HELO") -> noop
+		("EHLO") -> noop
 		("MAIL") | word2U == "FROM:" -> do
-			hPutStrLn h "250 OK"
+			h (Out "250 OK")
 			processLines h cmd (extractAddr word3) []
 		         | otherwise -> do
-			hPutStrLn h "250 OK"
+			h (Out "250 OK")
 			processLines h cmd (extractAddr $ snd $ split (/= ':') word2) []
 		("RCPT") | word2U == "TO:" -> do
-			hPutStrLn h "250 OK"
+			h (Out "250 OK")
 			processLines h cmd from (extractAddr word3 `maybePrepend` rcpt)
 		         | otherwise -> do
-			hPutStrLn h "250 OK"
+			h (Out "250 OK")
 			processLines h cmd from $ extractAddr (snd $ split (/= ':') word2)
 				`maybePrepend` rcpt
 		("DATA") ->
 			if null rcpt then do
-				hPutStrLn h "554 no valid recipients"
+				h (Out "554 no valid recipients")
 				processLines h cmd Nothing []
 			else do
-				hPutStrLn h "354 Send data"
+				h (Out "354 Send data")
 				mailLines <- getMailLines h
 				(i,_,_,ph) <- runInteractiveCommand finalCmd
 				mapM_ (hPutStrLn i) mailLines
 				hClose i
 				code <- waitForProcess ph
 				case code of
-					ExitSuccess -> hPutStrLn h "250 OK"
-					ExitFailure _ -> hPutStrLn h "451 command failed"
+					ExitSuccess -> h (Out "250 OK")
+					ExitFailure _ -> h (Out "451 command failed")
 				processLines h cmd Nothing []
 		("RSET") -> do
-			hPutStrLn h "250 OK"
+			h (Out "250 OK")
 			processLines h cmd Nothing []
-		("NOOP") -> hPutStrLn h "250 OK"
-		("QUIT") -> do
-			hPutStrLn h "221 localhost all done"
-			hClose h
-		_ -> hPutStrLn h "500 Command unrecognized"
-	processLines h cmd from rcpt
+		("NOOP") -> noop
+		("QUIT") -> h (Out "221 localhost all done") >> return ()
+		_ -> do
+			h (Out "500 Command unrecognized")
+			processLines h cmd from rcpt
 	where
+	noop = do
+		h (Out "250 OK")
+		processLines h cmd from rcpt
 	finalCmd = cmd ++ fromArg from ++ " -- " ++ concatMap shellEsc rcpt
 	fromArg (Just f) = " -f " ++ shellEsc f ++ " "
 	fromArg Nothing = ""
@@ -128,11 +145,11 @@ processLines h cmd from rcpt = do
 	shellEscSingle '\'' s = '\\' : ('\'' : s)
 	shellEscSingle c s = c : s
 
-getMailLines :: Handle -> IO [String]
+getMailLines :: LineHandle -> IO [String]
 getMailLines h = getMailData' []
 	where
 	getMailData' lines = do
-		line <- hGetLine h
+		line <- h In
 		if line == "." then return (reverse lines) else
 			if safeHead line '\0' == '.' then getMailData' $ tail line:lines else
 				getMailData' $ line:lines
