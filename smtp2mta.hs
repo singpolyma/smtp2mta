@@ -43,6 +43,10 @@ main = withSocketsDo $ do
 safeFinally :: IO () -> IO b -> IO ()
 safeFinally x y = catch (x `finally` y) (\(SomeException _) -> return ())
 
+safeHead :: [a] -> a -> a
+safeHead [] def = def
+safeHead list _ = head list
+
 simpleServer :: Handle -> IO ()
 simpleServer h = do
 	hSetBinaryMode h False
@@ -61,7 +65,7 @@ processLines h from rcpt = do
 	let word2 = tok !! 1
 	let word3 = tok !! 2
 	let word2U = map toUpper word2
-	case map toUpper $ head tok of
+	case map toUpper $ safeHead tok "" of
 		("HELO") -> hPutStrLn h "250 OK"
 		("EHLO") -> hPutStrLn h "250 OK"
 		("MAIL") | word2U == "FROM:" -> do
