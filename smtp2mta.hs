@@ -4,6 +4,8 @@ import Data.Char (toUpper)
 import Network
 import System (getArgs)
 import System.IO
+import System.Exit (ExitCode(..))
+import System.Process (runInteractiveCommand,waitForProcess)
 import System.Environment (getProgName)
 import System.Console.GetOpt
 import Control.Monad (liftM,forever,unless)
@@ -35,7 +37,7 @@ main = withSocketsDo $ do
 			sock <- listenOn $ getListen flags
 			forever $ do
 				(h,_,_) <- accept sock
-				forkIO $ simpleServer h
+				forkIO $ simpleServer h (unwords args)
 	where
 	getListen [] = PortNumber 2525
 	getListen (Listen p : _) = PortNumber p
@@ -48,19 +50,19 @@ safeHead :: [a] -> a -> a
 safeHead [] def = def
 safeHead list _ = head list
 
-simpleServer :: Handle -> IO ()
-simpleServer h = do
+simpleServer :: Handle -> String -> IO ()
+simpleServer h cmd = do
 	hSetBinaryMode h False
 	hSetBuffering h LineBuffering
 	hSetNewlineMode h NewlineMode {inputNL = CRLF, outputNL = CRLF}
 
 	hPutStrLn h "220 localhost smtp2mta"
 
-	processLines h Nothing [] `safeFinally`
+	processLines h cmd Nothing [] `safeFinally`
 		(hIsClosed h >>= (`unless` hClose h))
 
-processLines :: Handle -> Maybe String -> [String] -> IO ()
-processLines h from rcpt = do
+processLines :: Handle -> String -> Maybe String -> [String] -> IO ()
+processLines h cmd from rcpt = do
 	line <- hGetLine h
 	let tok = words line
 	let word2 = tok !! 1
@@ -71,31 +73,45 @@ processLines h from rcpt = do
 		("EHLO") -> hPutStrLn h "250 OK"
 		("MAIL") | word2U == "FROM:" -> do
 			hPutStrLn h "250 OK"
-			processLines h (extractAddr word3) []
+			processLines h cmd (extractAddr word3) []
 		         | otherwise -> do
 			hPutStrLn h "250 OK"
-			processLines h (extractAddr $ snd $ split (/= ':') word2) []
+			processLines h cmd (extractAddr $ snd $ split (/= ':') word2) []
 		("RCPT") | word2U == "TO:" -> do
 			hPutStrLn h "250 OK"
-			processLines h from (extractAddr word3 `maybePrepend` rcpt)
+			processLines h cmd from (extractAddr word3 `maybePrepend` rcpt)
 		         | otherwise -> do
 			hPutStrLn h "250 OK"
-			processLines h from $ extractAddr (snd $ split (/= ':') word2)
+			processLines h cmd from $ extractAddr (snd $ split (/= ':') word2)
 				`maybePrepend` rcpt
-		("DATA") -> do
-			hPutStrLn h "354 Send data"
-			mailData <- getMailData h
-			processLines h Nothing []
+		("DATA") ->
+			if null rcpt then do
+				hPutStrLn h "554 no valid recipients"
+				processLines h cmd Nothing []
+			else do
+				hPutStrLn h "354 Send data"
+				mailLines <- getMailLines h
+				(i,_,_,ph) <- runInteractiveCommand finalCmd
+				mapM_ (hPutStrLn i) mailLines
+				hClose i
+				code <- waitForProcess ph
+				case code of
+					ExitSuccess -> hPutStrLn h "250 OK"
+					ExitFailure _ -> hPutStrLn h "451 command failed"
+				processLines h cmd Nothing []
 		("RSET") -> do
 			hPutStrLn h "250 OK"
-			processLines h Nothing []
+			processLines h cmd Nothing []
 		("NOOP") -> hPutStrLn h "250 OK"
 		("QUIT") -> do
 			hPutStrLn h "221 localhost all done"
 			hClose h
 		_ -> hPutStrLn h "500 Command unrecognized"
-	processLines h from rcpt
+	processLines h cmd from rcpt
 	where
+	finalCmd = cmd ++ fromArg from ++ " -- " ++ concatMap shellEsc rcpt
+	fromArg (Just f) = " -f " ++ shellEsc f ++ " "
+	fromArg Nothing = ""
 	maybePrepend (Just x) xs = x:xs
 	maybePrepend Nothing xs = xs
 	extractAddr s =
@@ -108,14 +124,15 @@ processLines h from rcpt = do
 	split p s =
 		let (a,b) = span p s in
 			(a, drop 1 b)
+	shellEsc s = '\'' : foldr shellEscSingle "" s ++ "\'"
+	shellEscSingle '\'' s = '\\' : ('\'' : s)
+	shellEscSingle c s = c : s
 
-getMailData :: Handle -> IO String
-getMailData h = getMailData' []
+getMailLines :: Handle -> IO [String]
+getMailLines h = getMailData' []
 	where
-	getMailData' :: [String] -> IO String
 	getMailData' lines = do
 		line <- hGetLine h
-		if line == "." then return (linesToString lines) else
+		if line == "." then return (reverse lines) else
 			if safeHead line '\0' == '.' then getMailData' $ tail line:lines else
 				getMailData' $ line:lines
-	linesToString lines = concatMap (++"\r\n") (reverse lines)
