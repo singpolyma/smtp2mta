@@ -51,9 +51,8 @@ simpleServer h = do
 
 	hPutStrLn h "220 localhost smtp2mta"
 
-	processLines h Nothing [] `safeFinally` do
-		closed <- hIsClosed h
-		unless closed $ hClose h
+	processLines h Nothing [] `safeFinally`
+		(hIsClosed h >>= (`unless` hClose h))
 
 processLines :: Handle -> Maybe String -> [String] -> IO ()
 processLines h from rcpt = do
