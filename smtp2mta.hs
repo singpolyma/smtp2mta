@@ -81,7 +81,10 @@ processLines h from rcpt = do
 			hPutStrLn h "250 OK"
 			processLines h from $ extractAddr (snd $ split (/= ':') word2)
 				`maybePrepend` rcpt
-		("DATA") -> error "TODO"
+		("DATA") -> do
+			hPutStrLn h "354 Send data"
+			mailData <- getMailData h
+			processLines h Nothing []
 		("RSET") -> do
 			hPutStrLn h "250 OK"
 			processLines h Nothing []
@@ -104,3 +107,14 @@ processLines h from rcpt = do
 	split p s =
 		let (a,b) = span p s in
 			(a, drop 1 b)
+
+getMailData :: Handle -> IO String
+getMailData h = getMailData' []
+	where
+	getMailData' :: [String] -> IO String
+	getMailData' lines = do
+		line <- hGetLine h
+		if line == "." then return (linesToString lines) else
+			if safeHead line '\0' == '.' then getMailData' $ tail line:lines else
+				getMailData' $ line:lines
+	linesToString lines = concatMap (++"\r\n") (reverse lines)
