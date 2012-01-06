@@ -11,10 +11,11 @@ import Prelude hiding (catch)
 import Control.Exception (finally, catch, SomeException(..))
 import Control.Concurrent (forkIO)
 
-data Flag = Listen PortNumber
+data Flag = Listen PortNumber | Help deriving (Eq)
 options :: [OptDescr Flag]
 options = [
-		Option ['l'] ["listen"] (ReqArg port "PORT") "Listen on PORT (default 2525)"
+		Option ['l'] ["listen"] (ReqArg port "PORT") "Listen on PORT (default 2525)",
+		Option ['h'] ["help"] (NoArg Help) "Display this help message"
 	]
 	where
 	port = Listen . fromIntegral . (read :: String -> Int)
@@ -29,16 +30,16 @@ main :: IO ()
 main = withSocketsDo $ do
 	(flags, args, errors) <- liftM (getOpt RequireOrder options) getArgs
 
-	if length errors > 0 then usage errors else do
-		sock <- listenOn $ getListen flags
-		forever $ do
-			(h,_,_) <- accept sock
-			forkIO $ simpleServer h
+	if length errors > 0 then usage errors else
+		if Help `elem` flags then usage [] else do
+			sock <- listenOn $ getListen flags
+			forever $ do
+				(h,_,_) <- accept sock
+				forkIO $ simpleServer h
 	where
 	getListen [] = PortNumber 2525
 	getListen (Listen p : _) = PortNumber p
-	-- NOTE: Need to uncomment the following if we add other flags
-	-- getListen (_:xs) = getListen xs
+	getListen (_:xs) = getListen xs
 
 safeFinally :: IO () -> IO b -> IO ()
 safeFinally x y = catch (x `finally` y) (\(SomeException _) -> return ())
