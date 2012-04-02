@@ -126,7 +126,7 @@ processLines h cmd from rcpt = do
 	noop = do
 		h (Out "250 OK")
 		processLines h cmd from rcpt
-	finalCmd = cmd ++ fromArg from ++ " -- " ++ concatMap shellEsc rcpt
+	finalCmd = cmd ++ fromArg from ++ " -- " ++ unwords (map shellEsc rcpt)
 	fromArg (Just f) = " -f " ++ shellEsc f ++ " "
 	fromArg Nothing = ""
 	maybePrepend (Just x) xs = x:xs

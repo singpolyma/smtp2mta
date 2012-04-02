@@ -1,7 +1,7 @@
 # Not warning about unused do bind because of how the lineInOut hack works
 GHCFLAGS=-Wall -XNoCPP -fno-warn-name-shadowing -fno-warn-unused-do-bind -XHaskell98 -O2
 HLINTFLAGS=-XHaskell98 -XNoCPP -i 'Use camelCase' -i 'Use String' -i 'Use head' -i 'Use string literal' -i 'Use list comprehension' --utf8
-VERSION=0.1
+VERSION=0.2
 
 .PHONY: all clean doc install shell
 
