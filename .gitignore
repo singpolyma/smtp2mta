@@ -1,5 +1,15 @@
+dist/*
 *.hi
 *.o
-*.swp
+Tests
 report.html
-dist/*
+dist-ghc/*
+build-*-stamp
+debian/files
+debian/hlibrary.setup
+debian/libghc*
+debian/*.log
+debian/*.substvars
+debian/smtp2mta
+debian/tmp*
+debian/dh_*

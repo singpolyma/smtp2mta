@@ -3,12 +3,14 @@ GHCFLAGS=-Wall -XNoCPP -fno-warn-name-shadowing -fno-warn-unused-do-bind -XHaske
 HLINTFLAGS=-XHaskell98 -XNoCPP -i 'Use camelCase' -i 'Use String' -i 'Use head' -i 'Use string literal' -i 'Use list comprehension' --utf8
 VERSION=0.2
 
-.PHONY: all clean doc install shell
+.PHONY: all clean doc install shell debian
 
 all: report.html doc dist/build/smtp2mta/smtp2mta dist/smtp2mta-$(VERSION).tar.gz
 
 install: dist/build/smtp2mta/smtp2mta
 	cabal install
+
+debian: debian/control
 
 shell:
 	ghci $(GHCFLAGS)
@@ -33,6 +35,9 @@ dist/setup-config: smtp2mta.cabal
 clean:
 	find -name '*.o' -o -name '*.hi' | xargs $(RM)
 	$(RM) -r dist
+
+debian/control: smtp2mta.cabal
+	cabal-debian --update-debianization
 
 dist/build/smtp2mta/smtp2mta: smtp2mta.cabal dist/setup-config smtp2mta.hs
 	cabal build --ghc-options="$(GHCFLAGS)"
