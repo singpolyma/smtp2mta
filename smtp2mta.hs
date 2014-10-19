@@ -2,7 +2,7 @@ module Main where
 
 import Data.Char (toUpper)
 import Network
-import System (getArgs)
+import System.Environment (getArgs)
 import System.IO
 import System.Exit (ExitCode(..))
 import System.Process (runInteractiveCommand,waitForProcess)

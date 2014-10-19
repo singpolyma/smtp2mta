@@ -33,7 +33,6 @@ executable smtp2mta
 
         build-depends:
                 base == 4.*,
-                haskell98,
                 network,
                 process
 
