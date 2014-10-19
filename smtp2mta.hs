@@ -133,8 +133,7 @@ processLines h cmd cargs from rcpt = do
 	where
 	next = processLines h cmd cargs
 	noop = h (Out "250 OK") >> next from rcpt
-	maybePrepend (Just x) xs = x:xs
-	maybePrepend Nothing xs = xs
+	maybePrepend x xs = maybe xs (:xs) x
 	finalArgs = cargs ++ maybe [] (\f -> ["-f",f]) from ++ ["--"] ++ rcpt
 	extractAddr s =
 		let (a,b) = split (/= '<') s in
