@@ -34,7 +34,7 @@ executable smtp2mta
         build-depends:
                 base == 4.*,
                 network,
-                process
+                process >= 1.0.1.1
 
 source-repository head
         type:     git

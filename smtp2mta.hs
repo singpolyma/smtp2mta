@@ -5,7 +5,7 @@ import Network
 import System.Environment (getArgs)
 import System.IO
 import System.Exit (ExitCode(..))
-import System.Process (runInteractiveCommand,waitForProcess)
+import System.Process (proc,createProcess,StdStream(CreatePipe),CreateProcess(std_in),waitForProcess)
 import System.Environment (getProgName)
 import System.Console.GetOpt
 import Control.Monad (liftM,forever,unless)
@@ -35,21 +35,26 @@ usage errors = do
 main :: IO ()
 main = do
 	(flags, args, errors) <- liftM (getOpt RequireOrder options) getArgs
-
-	if length errors > 0 || Help `elem` flags then usage errors else
-		if InetD `elem` flags then do
+	case (getCmd args, errors) of
+		(Nothing, _)           -> usage errors
+		(_, (_:_))             -> usage errors
+		_ | Help `elem` flags  -> usage errors
+		(Just (cmd,cargs), _) | InetD `elem` flags -> do
 			configureHandle stdin
 			configureHandle stdout
-			simpleServer (lineInOut stdin stdout) (unwords args)
+			simpleServer (lineInOut stdin stdout) cmd cargs
 				`safeFinally` hClose stdout
-		else withSocketsDo $ do
+		(Just (cmd, cargs), _) -> withSocketsDo $ do
 			sock <- listenOn $ getListen flags
 			forever $ do
 				(h,_,_) <- accept sock
 				configureHandle h
-				forkIO $ simpleServer (lineInOut h h) (unwords args)
+				forkIO $ simpleServer (lineInOut h h) cmd cargs
 					`safeFinally` (hIsClosed h >>= (`unless` hClose h))
 	where
+	getCmd [] = Nothing
+	getCmd (cmd:args) = Just (cmd, args)
+
 	getListen [] = PortNumber 2525
 	getListen (Listen p : _) = PortNumber p
 	getListen (_:xs) = getListen xs
@@ -71,13 +76,20 @@ safeHead :: [a] -> a -> a
 safeHead [] def = def
 safeHead list _ = head list
 
-simpleServer :: LineHandle -> String -> IO ()
-simpleServer h cmd = do
-	h (Out "220 localhost smtp2mta")
-	processLines h cmd Nothing []
+runMTA :: FilePath -> [String] -> (Handle -> IO ()) -> IO ExitCode
+runMTA cmd args k = do
+	(Just stn, _, _, ph) <- createProcess (proc cmd args) { std_in = CreatePipe }
+	k stn
+	hClose stn
+	waitForProcess ph
 
-processLines :: LineHandle -> String -> Maybe String -> [String] -> IO ()
-processLines h cmd from rcpt = do
+simpleServer :: LineHandle -> FilePath -> [String] -> IO ()
+simpleServer h cmd cargs = do
+	h (Out "220 localhost smtp2mta")
+	processLines h cmd cargs Nothing []
+
+processLines :: LineHandle -> String -> [String] -> Maybe String -> [String] -> IO ()
+processLines h cmd cargs from rcpt = do
 	line <- h In
 	let tok = words line
 	let word2 = tok !! 1
@@ -88,49 +100,45 @@ processLines h cmd from rcpt = do
 		("EHLO") -> noop
 		("MAIL") | word2U == "FROM:" -> do
 			h (Out "250 OK")
-			processLines h cmd (extractAddr word3) []
+			next (extractAddr word3) []
 		         | otherwise -> do
 			h (Out "250 OK")
-			processLines h cmd (extractAddr $ snd $ split (/= ':') word2) []
+			next (extractAddr $ snd $ split (/= ':') word2) []
 		("RCPT") | word2U == "TO:" -> do
 			h (Out "250 OK")
-			processLines h cmd from (extractAddr word3 `maybePrepend` rcpt)
+			next from (extractAddr word3 `maybePrepend` rcpt)
 		         | otherwise -> do
 			h (Out "250 OK")
-			processLines h cmd from $ extractAddr (snd $ split (/= ':') word2)
+			next from $ extractAddr (snd $ split (/= ':') word2)
 				`maybePrepend` rcpt
 		("DATA") ->
 			if null rcpt then do
 				h (Out "554 no valid recipients")
-				processLines h cmd Nothing []
+				next Nothing []
 			else do
 				h (Out "354 Send data")
 				mailLines <- getMailLines h
-				(i,_,_,ph) <- runInteractiveCommand finalCmd
-				mapM_ (hPutStrLn i) mailLines
-				hClose i
-				code <- waitForProcess ph
+				code <- runMTA cmd finalArgs (\i -> mapM_ (hPutStrLn i) mailLines)
 				case code of
 					ExitSuccess -> h (Out "250 OK")
 					ExitFailure _ -> h (Out "451 command failed")
-				processLines h cmd Nothing []
+				next Nothing []
 		("RSET") -> do
 			h (Out "250 OK")
-			processLines h cmd Nothing []
+			next Nothing []
 		("NOOP") -> noop
 		("QUIT") -> h (Out "221 localhost all done") >> return ()
 		_ -> do
 			h (Out "500 Command unrecognized")
-			processLines h cmd from rcpt
+			next from rcpt
 	where
+	next = processLines h cmd cargs
 	noop = do
 		h (Out "250 OK")
-		processLines h cmd from rcpt
-	finalCmd = cmd ++ fromArg from ++ " -- " ++ unwords (map shellEsc rcpt)
-	fromArg (Just f) = " -f " ++ shellEsc f ++ " "
-	fromArg Nothing = ""
+		next from rcpt
 	maybePrepend (Just x) xs = x:xs
 	maybePrepend Nothing xs = xs
+	finalArgs = cargs ++ maybe [] (\f -> ["-f",f]) from ++ ["--"] ++ rcpt
 	extractAddr s =
 		let (a,b) = split (/= '<') s in
 			if null b then
@@ -141,9 +149,6 @@ processLines h cmd from rcpt = do
 	split p s =
 		let (a,b) = span p s in
 			(a, drop 1 b)
-	shellEsc s = '\'' : foldr shellEscSingle "" s ++ "\'"
-	shellEscSingle '\'' s = '\\' : ('\'' : s)
-	shellEscSingle c s = c : s
 
 getMailLines :: LineHandle -> IO [String]
 getMailLines h = getMailData' []
