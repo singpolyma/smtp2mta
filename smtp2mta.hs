@@ -98,6 +98,7 @@ processLines h cmd cargs from rcpt = do
 	case map toUpper $ safeHead tok "" of
 		("HELO") -> noop
 		("EHLO") -> noop
+		("NOOP") -> noop
 		("MAIL") | word2U == "FROM:" -> do
 			h (Out "250 OK")
 			next (extractAddr word3) []
@@ -126,16 +127,13 @@ processLines h cmd cargs from rcpt = do
 		("RSET") -> do
 			h (Out "250 OK")
 			next Nothing []
-		("NOOP") -> noop
 		("QUIT") -> h (Out "221 localhost all done") >> return ()
 		_ -> do
 			h (Out "500 Command unrecognized")
 			next from rcpt
 	where
 	next = processLines h cmd cargs
-	noop = do
-		h (Out "250 OK")
-		next from rcpt
+	noop = h (Out "250 OK") >> next from rcpt
 	maybePrepend (Just x) xs = x:xs
 	maybePrepend Nothing xs = xs
 	finalArgs = cargs ++ maybe [] (\f -> ["-f",f]) from ++ ["--"] ++ rcpt
