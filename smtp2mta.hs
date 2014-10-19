@@ -112,18 +112,17 @@ processLines h cmd cargs from rcpt = do
 			h (Out "250 OK")
 			next from $ extractAddr (snd $ split (/= ':') word2)
 				`maybePrepend` rcpt
-		("DATA") ->
-			if null rcpt then do
-				h (Out "554 no valid recipients")
-				next Nothing []
-			else do
-				h (Out "354 Send data")
-				mailLines <- getMailLines h
-				code <- runMTA cmd finalArgs (\i -> mapM_ (hPutStrLn i) mailLines)
-				case code of
-					ExitSuccess -> h (Out "250 OK")
-					ExitFailure _ -> h (Out "451 command failed")
-				next Nothing []
+		("DATA") | null rcpt -> do
+			h (Out "554 no valid recipients")
+			next Nothing []
+		         | otherwise -> do
+			h (Out "354 Send data")
+			mailLines <- getMailLines h
+			code <- runMTA cmd finalArgs (\i -> mapM_ (hPutStrLn i) mailLines)
+			case code of
+				ExitSuccess -> h (Out "250 OK")
+				ExitFailure _ -> h (Out "451 command failed")
+			next Nothing []
 		("RSET") -> do
 			h (Out "250 OK")
 			next Nothing []
